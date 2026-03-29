@@ -38,9 +38,9 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 2. Configurar o arquivo `.env`
+### 2. Configurar o arquivo `.env` (opcional para `FetchGarminData.py`)
 
-Crie um arquivo `.env` na raiz do projeto com o seguinte conteúdo:
+Crie um arquivo `.env` na raiz do projeto se você também for usar scripts que ainda consomem `GARTH_TOKEN`, como `GarminReport.py`:
 
 ```env
 # ── Token Garmin (gerado pelo GenerateTokenGarmin.py) ──────────────
@@ -48,12 +48,6 @@ Crie um arquivo `.env` na raiz do projeto com o seguinte conteúdo:
 # Renovar quando expirar (~30 dias para o access_token, ~30 dias para o refresh)
 GARTH_TOKEN=SEU_TOKEN_BASE64_AQUI
 
-# ── Credenciais da conta Garmin (usadas apenas para renovar o token) ──
-GARMIN_USERNAME=seu_email@example.com
-GARMIN_PASSWORD=sua_senha_aqui
-
-# ── Chave de criptografia (opcional, para uso futuro) ──────────────
-GARMIN_CREDENTIALS_KEY=chave_opcional
 ```
 
 > **Atenção:** Nunca adicione o `.env` ao Git. Adicione ao `.gitignore`:
@@ -72,13 +66,13 @@ GARMIN_CREDENTIALS_KEY=chave_opcional
 
 > **Propósito:** Gerar ou renovar o `GARTH_TOKEN` que vai para o `.env`.
 
-São equivalentes. Ambos abrem um **browser Chromium real** para que o usuário faça login manualmente na Garmin, capturam o ticket SSO gerado no redirecionamento e realizam a troca para tokens OAuth1 → OAuth2.
+São equivalentes. Ambos pedem email e senha no terminal, abrem um **browser Chromium real**, tentam preencher o login automaticamente e capturam o ticket SSO gerado no redirecionamento para realizar a troca OAuth1 → OAuth2. Se a Garmin exigir MFA ou confirmação extra, basta concluir no browser aberto.
 
 **Fluxo interno:**
 
 ```
 Browser (Playwright)
-    └─► Login manual na página SSO da Garmin
+    └─► Preenchimento automático ou continuação manual na página SSO da Garmin
         └─► Captura do ticket ST-xxxxx na URL/conteúdo da página
             └─► get_oauth_consumer()   → busca consumer_key/secret no S3 da garth
                 └─► get_oauth1_token()  → troca ticket por OAuth1 token
@@ -92,14 +86,15 @@ Browser (Playwright)
 python GenerateTokenGarmin.py
 ```
 
-1. Um browser abrirá automaticamente.
-2. Faça login com sua conta Garmin normalmente.
-3. O script captura o token e exibe no terminal:
+1. Informe email e senha da conta Garmin no terminal.
+2. Um browser abrirá automaticamente.
+3. Se necessário, conclua MFA ou validações extras.
+4. O script captura o token e exibe no terminal:
    ```
    GARMIN_TOKEN_B64 (paste into GitHub secret):
    W3sib2F1dGhfdG9rZW4...
    ```
-4. Copie o valor e cole no `.env` como `GARTH_TOKEN=...`
+5. Copie o valor e cole no `.env` como `GARTH_TOKEN=...` caso vá usar scripts que dependem dele.
 
 **Quando renovar?**
 - O `access_token` expira em ~1 dia (campo `expires_in`).
@@ -188,19 +183,30 @@ python ConectGarmin.py 14     # últimos 14 dias
 
 ### `FetchGarminData.py`
 
-> **Propósito:** Consulta rápida do dia atual e do dia anterior.
+> **Propósito:** Serviço interativo de consulta rápida do dia atual e do dia anterior.
 
-Script mais simples, ideal para verificar rapidamente o estado dos dados:
+O script pede email e senha da conta Garmin, gera o token durante a execução usando o fluxo do `GenerateTokenGarmin.py` e consulta os dados sem ler `GARTH_TOKEN` do `.env`.
+
+Ideal para verificar rapidamente o estado dos dados:
 
 - Perfil do usuário (nome, display name)
 - 5 atividades mais recentes (com calorias)
 - Frequência cardíaca de ontem (repouso, mín, máx)
 - Sono de ontem (total, profundo, leve, REM)
-- Composição corporal dos últimos 7 dias (peso, BMI)
 - Calorias do dia atual (total, ativas, BMR, passos, distância, andares)
 
 ```bash
 python FetchGarminData.py
+```
+
+Fluxo:
+
+```text
+Terminal
+  └─► solicita email e senha
+      └─► abre browser Playwright
+          └─► gera token OAuth em memória
+              └─► consulta perfil, atividades, FC, sono e calorias do dia
 ```
 
 ---
@@ -391,5 +397,3 @@ Contribuições são bem-vindas! Se você encontrar bugs, quiser adicionar novas
 3. Commit suas mudanças (`git commit -m 'Adiciona nova funcionalidade'`)
 4. Push para a branch (`git push origin feature/nova-funcionalidade`)
 5. Abra um **Pull Request**
-
-
