@@ -1,21 +1,10 @@
 # Garmin Connect — Integração via API
 
-Conjunto de scripts Python para autenticar no **Garmin Connect** e consumir dados de saúde e atividades físicas sem depender de bibliotecas de terceiros problemáticas (como `garminconnect` ou `garth` diretamente).
+Conjunto de scripts Python para autenticar no **Garmin Connect** e consumir dados de saúde e atividades físicas sem depender de bibliotecas de terceiros.
 
 A abordagem usa **OAuth2 via browser real (Playwright)**, contornando o bloqueio `429` que a Garmin aplica em logins programáticos.
 
 ---
-
-## Sugestões de nome para repositório GitHub
-
-Se você quiser hospedar este projeto no GitHub, aqui estão algumas opções descritivas:
-
-- **`python-garmin-connect`** — Padrão da comunidade Python; claro e conciso
-- **`garmin-connect-api`** — Direto ao ponto; foca na integração com a API
-- **`garmin-data-exporter`** — Enfatiza a funcionalidade de coleta e exportação de dados
-- **`garmin-wellness-reporter`** — Foca no propósito de gerar relatórios de saúde
-
-**Recomendação:** `python-garmin-connect` é o mais claro e segue convenções da comunidade Python.
 
 ## Estrutura dos arquivos
 
@@ -251,14 +240,22 @@ python GarminReport.py 30     # últimos 30 dias
 **Amostra da saída:**
 
 ```
-DATA           KCAL   ATIV   PASS    DIST   HR  HRmx     SONO STRESS   BB  HRV
-────────────────────────────────────────
-2026-03-27   2721.0  701.0   9167   7.3km   65   138      N/A    N/A    6  N/A
-2026-03-26   2057.0   37.0    746   0.6km   62   101      N/A    N/A    0  N/A
+── ATIVIDADES (últimos 7 dias) ───────────────────────────
+  [2026-03-27 10:26:27]  hiit                 0.00 km    93m14s   504 kcal  HR 112/154  "HIIT"
+  [2026-03-24 12:33:23]  hiit                 0.00 km    74m04s   418 kcal  HR 114/147  "HIIT"
+  [2026-03-23 12:40:37]  hiit                 0.00 km    75m01s   408 kcal  HR 113/150  "HIIT"
+  Total: 3 atividades
 
-ATIVIDADES DO PERÍODO
-  [2026-03-27 10:26:27]  hiit    0.00 km  93m14s   504 kcal  HR 112/154  "HIIT"
-  [2026-03-24 12:33:23]  hiit    0.00 km  74m04s   418 kcal  HR 114/147  "HIIT"
+── RESUMO DIÁRIO (últimos 7 dias) ────────────────────────
+  DATA            KCAL   ATIV   PASS    DIST   HR  HRmx   BB
+  ──────────────────────────────────────────────────────────
+  2026-03-23    2577.0  557.0   8312   6.6km   60   142  N/A
+  2026-03-24    2405.0  385.0   4185   3.3km   61   137  N/A
+  2026-03-25    2148.0  128.0   3087   2.4km   61   114    2
+  2026-03-26    2057.0   37.0    746   0.6km   62   101  N/A
+  2026-03-27    2721.0  701.0   9167   7.3km   65   138    6
+  2026-03-28    2020.0    N/A    N/A     N/A  N/A   N/A  N/A
+  2026-03-29    1302.0   41.0   1066   0.8km   61   108    4
 ```
 
 ---
