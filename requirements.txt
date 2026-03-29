@@ -1,0 +1,12 @@
+# ── Dependências diretas ───────────────────────────────────────────
+requests==2.33.0                # HTTP client
+requests-oauthlib==2.0.0        # OAuth1 para troca de tokens Garmin (ScriptTeste / GenerateTokenGarmin)
+python-dotenv==1.2.2            # Leitura do .env (GARTH_TOKEN, etc.)
+playwright==1.58.0              # Browser headless para login SSO (ScriptTeste / GenerateTokenGarmin)
+
+# ── Dependências transitivas (fixadas para reprodutibilidade) ──────
+oauthlib==3.3.1
+certifi==2026.2.25
+charset-normalizer==3.4.6
+idna==3.11
+urllib3==2.6.3

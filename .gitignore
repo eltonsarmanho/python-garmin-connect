@@ -1,0 +1,67 @@
+# Environment & Credentials
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Reports & exports
+garmin_report_*.json
+*.log
+*.pot
+
+# Token files (if stored locally)
+oauth1_token.json
+oauth2_token.json
+*.garth
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
