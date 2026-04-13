@@ -1,90 +1,80 @@
 """
 FetchGarminData.py
 ------------------
-Interactive Garmin data service.
+Fetch Garmin Connect data using email/password authentication.
 
 Flow:
 1. Ask the user for Garmin email and password.
-2. Generate an OAuth token bundle using the Playwright flow from GenerateTokenGarmin.py.
-3. Use the generated token in-memory to fetch profile, activities, heart rate, sleep,
-   and daily summary data.
+2. Try to resume a saved session from ~/.garth; fall back to fresh login.
+3. Fetch and display: profile, daily summary, recent activities,
+   heart rate, and sleep data.
 
-This script does not read GARTH_TOKEN from .env.
+Usage:
+  python FetchGarminData.py
 """
 
+import getpass
+import sys
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Optional
 
-import requests
+from garminconnect import (
+    Garmin,
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectTooManyRequestsError,
+)
 
-from GenerateTokenGarmin import generate_token_bundle
-from GenerateTokenGarmin import prompt_credentials
-
-BASE = "https://connectapi.garmin.com"
-HEADERS_TEMPLATE = {
-    "User-Agent": "GCM-iOS-5.7.2.1",
-    "NK": "NT",
-    "origin": "https://connect.garmin.com",
-}
+TOKEN_DIR = str(Path.home() / ".garth")
 
 
-def make_session(oauth2: dict) -> requests.Session:
-    sess = requests.Session()
-    sess.headers.update(HEADERS_TEMPLATE)
-    sess.headers["Authorization"] = f"Bearer {oauth2['access_token']}"
-    return sess
+# ── Authentication ────────────────────────────────────────────────────────────
+
+def prompt_credentials() -> tuple[str, str]:
+    email = input("Email Garmin: ").strip()
+    if not email:
+        raise ValueError("Email é obrigatório.")
+    password = getpass.getpass("Senha Garmin: ").strip()
+    if not password:
+        raise ValueError("Senha é obrigatória.")
+    return email, password
 
 
-def get_profile(sess: requests.Session) -> dict:
-    """Logged-in user profile."""
-    r = sess.get(f"{BASE}/userprofile-service/socialProfile", timeout=15)
-    r.raise_for_status()
-    return r.json()
+def get_mfa_code() -> str:
+    return input("Código MFA: ").strip()
 
 
-def get_activities(sess: requests.Session, start: int = 0, limit: int = 10) -> list:
-    """Most recent activities."""
-    r = sess.get(
-        f"{BASE}/activitylist-service/activities/search/activities",
-        params={"start": start, "limit": limit},
-        timeout=15,
-    )
-    r.raise_for_status()
-    return r.json()
+def authenticate(email: str, password: str) -> Garmin:
+    """Load saved tokens from ~/.garth or perform a fresh login."""
+    try:
+        api = Garmin()
+        api.login(TOKEN_DIR)
+        print("Sessão retomada a partir de tokens salvos.")
+        return api
+    except Exception:
+        pass
+
+    print("Autenticando com email/senha...")
+    api = Garmin(email=email, password=password, is_cn=False, prompt_mfa=get_mfa_code)
+    try:
+        api.login()
+    except GarminConnectAuthenticationError as err:
+        print(f"[ERRO] Autenticação falhou: {err}", file=sys.stderr)
+        sys.exit(1)
+    except GarminConnectTooManyRequestsError:
+        print("[ERRO] Muitas requisições (429). Tente novamente mais tarde.", file=sys.stderr)
+        sys.exit(1)
+    except GarminConnectConnectionError as err:
+        print(f"[ERRO] Falha de conexão: {err}", file=sys.stderr)
+        sys.exit(1)
+
+    Path(TOKEN_DIR).mkdir(parents=True, exist_ok=True)
+    api.client.dump(TOKEN_DIR)
+    return api
 
 
-def get_daily_sleep(sess: requests.Session, sleep_date: str) -> dict:
-    """Sleep data for a given date (YYYY-MM-DD)."""
-    r = sess.get(
-        f"{BASE}/wellness-service/wellness/dailySleepData",
-        params={"date": sleep_date},
-        timeout=15,
-    )
-    r.raise_for_status()
-    return r.json()
-
-
-def get_heart_rate(sess: requests.Session, hr_date: str) -> dict:
-    """Heart-rate summary for a given date (YYYY-MM-DD)."""
-    r = sess.get(
-        f"{BASE}/wellness-service/wellness/dailyHeartRate",
-        params={"date": hr_date},
-        timeout=15,
-    )
-    r.raise_for_status()
-    return r.json()
-
-
-def get_daily_summary(sess: requests.Session, display_name: str, summary_date: str) -> dict:
-    """Daily wellness summary: total/active/BMR calories, steps, distance, floors."""
-    r = sess.get(
-        f"{BASE}/usersummary-service/usersummary/daily/{display_name}",
-        params={"calendarDate": summary_date},
-        timeout=15,
-    )
-    r.raise_for_status()
-    return r.json()
-
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def safe_fetch(fetcher, *args, default=None):
     try:
@@ -117,136 +107,98 @@ def print_header(title: str) -> None:
     print("─" * 10)
 
 
-class GarminDataService:
-    """Authenticate on demand and fetch Garmin data for the current session."""
+# ── Display ───────────────────────────────────────────────────────────────────
 
-    def __init__(self, email: str, password: str):
-        self.email = email
-        self.password = password
-        self.token_bundle: Optional[dict] = None
-        self.session: Optional[requests.Session] = None
-        self.profile: Optional[dict] = None
+def print_dashboard(api: Garmin, today: str, yesterday: str) -> None:
+    # ── Profile ──────────────────────────────────────────────────────────────
+    print_header("PERFIL")
+    full_name = safe_fetch(api.get_full_name, default="N/A")
+    print(f"  Nome: {full_name}")
 
-    def authenticate(self) -> dict:
-        """Generate a token bundle and prepare the authenticated session."""
-        print("Gerando token Garmin para esta sessao...")
-        bundle, profile = generate_token_bundle(
-            username=self.email,
-            password=self.password,
-            save_local_copy=False,
-            verify=True,
-        )
-        self.token_bundle = bundle
-        self.session = make_session(bundle["oauth2"])
-        self.profile = profile or get_profile(self.session)
-        return self.profile
-
-    def ensure_authenticated(self) -> None:
-        if self.session is None or self.profile is None:
-            self.authenticate()
-
-    def fetch_dashboard(self) -> dict:
-        """Fetch the main Garmin dashboard payload."""
-        self.ensure_authenticated()
-
-        assert self.session is not None
-        assert self.profile is not None
-
-        today = date.today().isoformat()
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-        display_name = self.profile.get("displayName", "")
-
-        return {
-            "profile": self.profile,
-            "recent_activities": safe_fetch(get_activities, self.session, 0, 5, default=[]),
-            "heart_rate": safe_fetch(get_heart_rate, self.session, yesterday),
-            "sleep": safe_fetch(get_daily_sleep, self.session, yesterday),
-            "daily_summary": safe_fetch(get_daily_summary, self.session, display_name, today),
-            "today": today,
-            "yesterday": yesterday,
-        }
-
-
-def print_dashboard(data: dict) -> None:
-    profile = data["profile"]
-    display_name = profile.get("displayName", "")
-
-    print_header("PROFILE")
-    print(f"  Name        : {profile.get('fullName', 'N/A')}")
-    print(f"  Display name: {display_name}")
-    print(f"  Location    : {profile.get('location', 'N/A')}")
-
+    # ── Daily summary ─────────────────────────────────────────────────────────
     print()
-    print_header("RECENT ACTIVITIES (last 5)")
-    activities = data["recent_activities"]
+    print_header(f"RESUMO DO DIA ({today})")
+    summary = safe_fetch(api.get_stats, today)
+    if summary and "error" not in summary:
+        def fv(v, unit=""):
+            return f"{v}{unit}" if v is not None else "N/A"
+
+        dist_m = summary.get("totalDistanceMeters")
+        print(f"  Total kcal  : {fv(summary.get('totalKilocalories'), ' kcal')}")
+        print(f"  Ativas      : {fv(summary.get('activeKilocalories'), ' kcal')}")
+        print(f"  BMR         : {fv(summary.get('bmrKilocalories'), ' kcal')}")
+        print(f"  Passos      : {fv(summary.get('totalSteps'))}")
+        print(f"  Distância   : {f'{dist_m / 1000:.2f} km' if dist_m is not None else 'N/A'}")
+        print(f"  Andares     : {fv(summary.get('floorsAscended'))}")
+    else:
+        err = summary.get("error") if summary else "sem dados"
+        print(f"  (não disponível: {err})")
+
+    # ── Recent activities ─────────────────────────────────────────────────────
+    print()
+    print_header("ATIVIDADES RECENTES (últimas 5)")
+    activities = safe_fetch(api.get_activities, 0, 5, default=[])
     if not activities:
         print("  Nenhuma atividade encontrada.")
-    for act in activities:
-        name = act.get("activityName", "?")
-        sport = act.get("activityType", {}).get("typeKey", "?")
-        dist = act.get("distance", 0) / 1000
-        calories = act.get("calories") or 0
-        dur = int(act.get("duration", 0))
-        start_t = act.get("startTimeLocal", "?")
-        print(
-            f"  [{start_t}]  {sport:20s}  {dist:.2f} km  "
-            f"{dur//60}m{dur%60:02d}s  {int(calories)} kcal  \"{name}\""
-        )
-
-    print()
-    print_header(f"HEART RATE ({data['yesterday']})")
-    hr = data["heart_rate"]
-    if "error" in hr:
-        print(f"  (not available: {hr['error']})")
     else:
-        print(f"  Resting HR : {format_hr(hr.get('restingHeartRate'))}")
-        print(f"  Min HR     : {format_hr(hr.get('minHeartRate'))}")
-        print(f"  Max HR     : {format_hr(hr.get('maxHeartRate'))}")
+        for act in activities:
+            name = act.get("activityName", "?")
+            sport = act.get("activityType", {}).get("typeKey", "?")
+            dist = (act.get("distance") or 0) / 1000
+            calories = act.get("calories") or 0
+            dur = int(act.get("duration") or 0)
+            start_t = act.get("startTimeLocal", "?")
+            print(
+                f"  [{start_t}]  {sport:20s}  {dist:.2f} km  "
+                f"{dur // 60}m{dur % 60:02d}s  {int(calories)} kcal  \"{name}\""
+            )
 
+    # ── Heart rate ────────────────────────────────────────────────────────────
     print()
-    print_header(f"SLEEP ({data['yesterday']})")
-    sleep = data["sleep"]
-    if "error" in sleep:
-        print(f"  (not available: {sleep['error']})")
+    print_header(f"FREQUÊNCIA CARDÍACA ({yesterday})")
+    hr = safe_fetch(api.get_heart_rates, yesterday)
+    if hr and "error" not in hr:
+        print(f"  Repouso : {format_hr(hr.get('restingHeartRate'))}")
+        print(f"  Mínima  : {format_hr(hr.get('minHeartRate'))}")
+        print(f"  Máxima  : {format_hr(hr.get('maxHeartRate'))}")
     else:
+        err = hr.get("error") if hr else "sem dados"
+        print(f"  (não disponível: {err})")
+
+    # ── Sleep ─────────────────────────────────────────────────────────────────
+    print()
+    print_header(f"SONO ({yesterday})")
+    sleep = safe_fetch(api.get_sleep_data, yesterday)
+    if sleep and "error" not in sleep:
         daily_sleep = sleep.get("dailySleepDTO") or {}
-        print(f"  Total sleep : {format_seconds_as_hm(daily_sleep.get('sleepTimeSeconds'))}")
-        print(f"  Deep sleep  : {format_seconds_as_minutes(daily_sleep.get('deepSleepSeconds'))}")
-        print(f"  Light sleep : {format_seconds_as_minutes(daily_sleep.get('lightSleepSeconds'))}")
-        print(f"  REM sleep   : {format_seconds_as_minutes(daily_sleep.get('remSleepSeconds'))}")
-        print(f"  Awake       : {format_seconds_as_minutes(daily_sleep.get('awakeSleepSeconds'))}")
-
-    print()
-    print_header(f"CALORIAS DO DIA ({data['today']})")
-    summary = data["daily_summary"]
-    if "error" in summary:
-        print(f"  (not available: {summary['error']})")
+        print(f"  Total    : {format_seconds_as_hm(daily_sleep.get('sleepTimeSeconds'))}")
+        print(f"  Profundo : {format_seconds_as_minutes(daily_sleep.get('deepSleepSeconds'))}")
+        print(f"  Leve     : {format_seconds_as_minutes(daily_sleep.get('lightSleepSeconds'))}")
+        print(f"  REM      : {format_seconds_as_minutes(daily_sleep.get('remSleepSeconds'))}")
+        print(f"  Acordado : {format_seconds_as_minutes(daily_sleep.get('awakeSleepSeconds'))}")
     else:
-        total = summary.get("totalKilocalories")
-        active = summary.get("activeKilocalories")
-        bmr = summary.get("bmrKilocalories")
-        steps = summary.get("totalSteps")
-        dist_m = summary.get("totalDistanceMeters")
-        floors = summary.get("floorsAscended")
-
-        def fv(value, unit=""):
-            return f"{value}{unit}" if value is not None else "N/A"
-
-        print(f"  Total kcal  : {fv(total, ' kcal')}")
-        print(f"  Ativas      : {fv(active, ' kcal')}")
-        print(f"  BMR         : {fv(bmr, ' kcal')}")
-        print(f"  Passos      : {fv(steps)}")
-        print(f"  Distancia   : {f'{dist_m/1000:.2f} km' if dist_m is not None else 'N/A'}")
-        print(f"  Andares     : {fv(floors)}")
+        err = sleep.get("error") if sleep else "sem dados"
+        print(f"  (não disponível: {err})")
 
     print()
 
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
     email, password = prompt_credentials()
-    service = GarminDataService(email=email, password=password)
-    dashboard = service.fetch_dashboard()
-    print_dashboard(dashboard)
+
+    print("\nConectando ao Garmin Connect...")
+    api = authenticate(email, password)
+
+    today = date.today().isoformat()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+    print_dashboard(api, today, yesterday)
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":

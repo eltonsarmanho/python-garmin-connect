@@ -1,60 +1,41 @@
 # Garmin Connect — Integração via API
 
-Conjunto de scripts Python para autenticar no **Garmin Connect** e consumir dados de saúde e atividades físicas sem depender de bibliotecas de terceiros.
+Conjunto de scripts Python para autenticar no **Garmin Connect** e consumir dados de saúde e atividades físicas.
 
-A abordagem usa **OAuth2 via browser real (Playwright)**, contornando o bloqueio `429` que a Garmin aplica em logins programáticos.
+A autenticação usa a biblioteca oficial **[`garminconnect`](https://github.com/cyberjunky/python-garminconnect)** (cyberjunky), que implementa o mesmo fluxo SSO mobile da Garmin, obtendo tokens OAuth DI nativos. Os tokens são salvos localmente e reutilizados automaticamente — sem necessidade de browser ou `.env`.
 
 ---
 
 ## Estrutura dos arquivos
 
 ```
-TesteGarmin/
-├── .env                    # Credenciais e tokens (NÃO commitar no Git!)
-├── requirements.txt        # Dependências Python
+python-garmin-connect/
+├── requirements.txt            # Dependências Python
 │
-├── GenerateTokenGarmin.py  # PASSO 1 — Gera o token via browser
-├── ScriptTeste.py          # Alternativa ao GenerateTokenGarmin (mesmo propósito)
-│
-├── ConectGarmin.py         # Módulo reutilizável — funções de conexão
-├── FetchGarminData.py      # Script de consulta simples (perfil, HR, sono, atividades)
-└── GarminReport.py         # Relatório completo dos últimos N dias + export JSON
+├── GenerateTokenGarmin.py      # PASSO 1 — Autentica e salva tokens em ~/.garminconnect
+├── FetchGarminData.py          # Consulta rápida: perfil, atividades, FC, sono, calorias do dia
+└── GarminReport.py             # Relatório completo dos últimos N dias + export JSON
 ```
 
 ---
 
 ## Configuração inicial
 
-### 1. Instalar dependências
+### 1. Criar e ativar o ambiente virtual
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate        # Linux/Mac
-# .venv\Scripts\activate         # Windows
+python -m venv venv
+source venv/bin/activate        # Linux/Mac
+# venv\Scripts\activate         # Windows
+```
 
+### 2. Instalar dependências
+
+```bash
 pip install -r requirements.txt
-
-# Baixar o navegador Chromium (necessário apenas na primeira vez)
-playwright install chromium
 ```
 
-### 2. Configurar o arquivo `.env` (opcional para `FetchGarminData.py`)
-
-Crie um arquivo `.env` na raiz do projeto se você também for usar scripts que ainda consomem `GARTH_TOKEN`, como `GarminReport.py`:
-
-```env
-# ── Token Garmin (gerado pelo GenerateTokenGarmin.py) ──────────────
-# Valor base64 contendo [oauth1_token, oauth2_token]
-# Renovar quando expirar (~30 dias para o access_token, ~30 dias para o refresh)
-GARTH_TOKEN=SEU_TOKEN_BASE64_AQUI
-
-```
-
-> **Atenção:** Nunca adicione o `.env` ao Git. Adicione ao `.gitignore`:
-> ```
-> .env
-> garmin_report_*.json
-> ```
+> **Não é necessário** instalar Playwright, browser Chromium, `.env` ou nenhum token manual.
 
 ---
 
@@ -62,22 +43,22 @@ GARTH_TOKEN=SEU_TOKEN_BASE64_AQUI
 
 ---
 
-### `GenerateTokenGarmin.py` / `ScriptTeste.py`
+### `GenerateTokenGarmin.py`
 
-> **Propósito:** Gerar ou renovar o `GARTH_TOKEN` que vai para o `.env`.
+> **Propósito:** Autenticar na Garmin com email e senha, e salvar os tokens localmente para reutilização.
 
-São equivalentes. Ambos pedem email e senha no terminal, abrem um **browser Chromium real**, tentam preencher o login automaticamente e capturam o ticket SSO gerado no redirecionamento para realizar a troca OAuth1 → OAuth2. Se a Garmin exigir MFA ou confirmação extra, basta concluir no browser aberto.
+Usa a biblioteca `garminconnect` para realizar o login via fluxo SSO mobile nativo da Garmin. Os tokens são salvos em `~/.garminconnect/` e reaproveitados automaticamente nas próximas execuções — sem necessidade de logar novamente.
+
+Suporta **MFA/2FA**: se a conta exigir código de autenticação, o script solicitará no terminal.
 
 **Fluxo interno:**
 
 ```
-Browser (Playwright)
-    └─► Preenchimento automático ou continuação manual na página SSO da Garmin
-        └─► Captura do ticket ST-xxxxx na URL/conteúdo da página
-            └─► get_oauth_consumer()   → busca consumer_key/secret no S3 da garth
-                └─► get_oauth1_token()  → troca ticket por OAuth1 token
-                    └─► exchange_oauth2() → troca OAuth1 por OAuth2 token
-                        └─► Salva em ~/.garth/ e imprime GARTH_TOKEN_B64
+Terminal (email + senha)
+    └─► garminconnect.Garmin.login()
+        └─► SSO mobile da Garmin (curl_cffi)
+            └─► Tokens OAuth DI salvos em ~/.garminconnect/
+                └─► Sessão pronta para uso pelos demais scripts
 ```
 
 **Como usar:**
@@ -86,114 +67,28 @@ Browser (Playwright)
 python GenerateTokenGarmin.py
 ```
 
-1. Informe email e senha da conta Garmin no terminal.
-2. Um browser abrirá automaticamente.
-3. Se necessário, conclua MFA ou validações extras.
-4. O script captura o token e exibe no terminal:
-   ```
-   GARMIN_TOKEN_B64 (paste into GitHub secret):
-   W3sib2F1dGhfdG9rZW4...
-   ```
-5. Copie o valor e cole no `.env` como `GARTH_TOKEN=...` caso vá usar scripts que dependem dele.
+1. Informe email e senha da conta Garmin.
+2. Se a conta tiver MFA ativo, informe o código quando solicitado.
+3. Os tokens são salvos automaticamente em `~/.garminconnect/`.
+4. Na próxima execução, a sessão é retomada dos tokens salvos, sem pedir credenciais.
 
-**Quando renovar?**
-- O `access_token` expira em ~1 dia (campo `expires_in`).
-- O `refresh_token` expira em ~30 dias (`refresh_token_expires_in`).
-- Ao receber erro `401 Unauthorized`, execute o script novamente.
-
----
-
-### `ConectGarmin.py`
-
-> **Propósito:** Módulo reutilizável para outros sistemas importarem.
-
-Contém as funções de conexão e consulta à API, prontas para serem importadas por qualquer outro script ou sistema externo.
-
-**Funções públicas:**
-
-| Função | Descrição | Retorno |
-|---|---|---|
-| `get_garmin_activities(days)` | Atividades dos últimos N dias | `{"activities": [...], "count": int}` |
-| `get_garmin_activities_with_credentials(days, u, p)` | Alias de compatibilidade (ignora u/p, usa o token) | igual ao acima |
-| `get_garmin_daily_summary(days)` | Resumo diário: calorias, passos, HR, Body Battery | `{"days": [...]}` |
-
-**Exemplo de uso como módulo:**
-
-```python
-from ConectGarmin import get_garmin_activities, get_garmin_daily_summary
-
-# Atividades dos últimos 7 dias
-result = get_garmin_activities(days=7)
-for act in result["activities"]:
-    print(act["date"], act["type"], act["calories"], "kcal", act["hr_avg"], "bpm avg")
-
-# Resumo diário dos últimos 30 dias
-summary = get_garmin_daily_summary(days=30)
-for day in summary["days"]:
-    print(day["date"], day["total_kcal"], "kcal", day["steps"], "passos")
-```
-
-**Estrutura de cada atividade:**
-
-```json
-{
-  "date": "2026-03-27",
-  "start": "2026-03-27 10:26:27",
-  "type": "hiit",
-  "name": "HIIT",
-  "duration_s": 5594,
-  "duration_fmt": "93m14s",
-  "distance_km": 0.0,
-  "calories": 504,
-  "bmr_calories": 80,
-  "hr_avg": 112,
-  "hr_max": 154,
-  "vo2_max": null,
-  "training_effect": 3.5,
-  "steps": null
-}
-```
-
-**Estrutura de cada dia (resumo):**
-
-```json
-{
-  "date": "2026-03-27",
-  "total_kcal": 2721.0,
-  "active_kcal": 701.0,
-  "bmr_kcal": 2020.0,
-  "steps": 9167,
-  "distance_km": 7.26,
-  "hr_resting": 65,
-  "hr_min": 59,
-  "hr_max": 138,
-  "bb_max": 6,
-  "bb_min": 67
-}
-```
-
-**Execução direta:**
-
-```bash
-python ConectGarmin.py        # últimos 7 dias
-python ConectGarmin.py 14     # últimos 14 dias
-```
+**Quando reautenticar?**
+- Os tokens DI incluem refresh token. O script os renova automaticamente enquanto o refresh token for válido (~90 dias).
+- Se receber erro `401 Unauthorized`, execute o script novamente para fazer um novo login.
 
 ---
 
 ### `FetchGarminData.py`
 
-> **Propósito:** Serviço interativo de consulta rápida do dia atual e do dia anterior.
+> **Propósito:** Consulta rápida e interativa dos dados do dia atual e do dia anterior.
 
-O script pede email e senha da conta Garmin, gera o token durante a execução usando o fluxo do `GenerateTokenGarmin.py` e consulta os dados sem ler `GARTH_TOKEN` do `.env`.
+Pede email e senha no terminal, tenta retomar a sessão salva em `~/.garminconnect/` e — caso não exista — realiza um novo login. Exibe no terminal:
 
-Ideal para verificar rapidamente o estado dos dados:
-
-- Perfil do usuário (nome, display name)
-- 5 atividades mais recentes (com calorias)
-- Frequência cardíaca de ontem (repouso, mín, máx)
-- Sono de ontem (total, profundo, leve, REM)
-- Calorias do dia atual (total, ativas, BMR, passos, distância, andares)
+- Nome do usuário autenticado
+- Resumo do dia atual (calorias total/ativas/BMR, passos, distância, andares)
+- 5 atividades mais recentes (tipo, distância, duração, calorias)
+- Frequência cardíaca de ontem (repouso, mínima, máxima)
+- Sono de ontem (total, profundo, leve, REM, acordado)
 
 ```bash
 python FetchGarminData.py
@@ -202,11 +97,11 @@ python FetchGarminData.py
 Fluxo:
 
 ```text
-Terminal
-  └─► solicita email e senha
-      └─► abre browser Playwright
-          └─► gera token OAuth em memória
-              └─► consulta perfil, atividades, FC, sono e calorias do dia
+Terminal (email + senha)
+  └─► Tenta retomar sessão de ~/.garminconnect/
+      └─► Se inválida: novo login via garminconnect.Garmin.login()
+          └─► Tokens salvos em ~/.garminconnect/
+              └─► Consulta perfil, atividades, FC, sono e resumo do dia
 ```
 
 ---
@@ -215,9 +110,11 @@ Terminal
 
 > **Propósito:** Relatório completo dos últimos N dias com export JSON.
 
+> **Atenção:** Este script ainda usa autenticação via `GARTH_TOKEN` no `.env` (fluxo legado). Para integrá-lo ao novo fluxo, substitua a função `load_token()` pela função `authenticate()` do `FetchGarminData.py`.
+
 O script mais completo. Coleta por dia:
 
-| Métrica | Campo na API |
+| Métrica | Endpoint da API |
 |---|---|
 | Calorias totais / ativas / BMR | `usersummary-service` |
 | Passos, distância, andares | `usersummary-service` |
@@ -266,48 +163,29 @@ python GarminReport.py 30     # últimos 30 dias
 
 ---
 
-## Entendendo o `GARTH_TOKEN`
+## Como a autenticação funciona
 
-O token é um **JSON codificado em Base64** com dois objetos dentro de uma lista:
+A biblioteca `garminconnect` utiliza o mesmo fluxo de autenticação SSO mobile da Garmin:
 
-```
-base64_decode(GARTH_TOKEN) → [ oauth1_token, oauth2_token ]
-```
+1. Login via `curl_cffi` simulando o app Android da Garmin Connect
+2. Obtenção de tokens **DI OAuth** nativos (não mais OAuth1 + troca manual)
+3. Tokens salvos localmente em `~/.garminconnect/garmin_tokens.json`
+4. Nas próximas execuções, os tokens são carregados e renovados automaticamente via refresh token
 
-**oauth1_token** (posição `[0]`):
-```json
-{
-  "oauth_token": "9f21eefb-d29a-4082-81c8-019dce68b6c0",
-  "oauth_token_secret": "HZxRjbvX02RH442nrJAIkARmc6cETIBOiqc",
-  "mfa_token": null,
-  "domain": "garmin.com"
-}
-```
-
-**oauth2_token** (posição `[1]`):
-```json
-{
-  "access_token": "eyJhbGci...",   // JWT — usado nos headers Authorization: Bearer
-  "refresh_token": "eyJyZWZ...",   // Para renovar o access_token sem novo login
-  "expires_in": 86400,             // Validade do access_token em segundos (~1 dia)
-  "expires_at": 1757301783,        // Timestamp Unix de expiração
-  "refresh_token_expires_in": 2592000,
-  "refresh_token_expires_at": 1759790874,
-  "scope": "CONNECT_READ CONNECT_WRITE ..."
-}
-```
-
-Os scripts usam apenas o `oauth2_token["access_token"]` no header `Authorization: Bearer <token>` de cada requisição à API do Garmin Connect.
+Os avisos `mobile+cffi returned 429` e `mobile+requests returned 429` são normais durante o login — a lib testa diferentes métodos de forma automática antes de encontrar um que funcione.
 
 ---
 
-## Por que usar browser (Playwright)?
+## Tokens — onde ficam salvos
 
-A Garmin bloqueia com `HTTP 429 Too Many Requests` qualquer tentativa de login programático direto (`POST` com usuário/senha). O browser real passa por esse bloqueio porque:
+```
+~/.garminconnect/
+└── garmin_tokens.json    # access_token + refresh_token + expiração
+```
 
-1. Executa o SSO embed da Garmin igual ao app mobile/web faz.
-2. Passa por verificações de CAPTCHA e cookies de sessão normalmente.
-3. O ticket `ST-xxxxx` é capturado do conteúdo/URL da página após o login.
+- **Validade do access token:** ~1 hora (renovado automaticamente)
+- **Validade do refresh token:** ~90 dias
+- Após 90 dias sem uso, execute `GenerateTokenGarmin.py` novamente para novo login
 
 ---
 
@@ -324,7 +202,6 @@ A Garmin bloqueia com `HTTP 429 Too Many Requests` qualquer tentativa de login p
 | `/wellness-service/wellness/bodyBattery/reports/daily` | Body Battery |
 | `/hrv-service/hrv` | HRV (variabilidade cardíaca) |
 | `/fitnessstats-service/fitnessStats/{user}` | VO2 Max, Fitness Age |
-| `/weight-service/weight/dateRange` | Composição corporal (peso, BMI) |
 
 ---
 
@@ -342,33 +219,22 @@ Algumas métricas retornam `N/A` dependendo do dispositivo e hábitos:
 
 ---
 
-## Renovar o token (passo a passo)
-
-1. Execute o script de geração:
-   ```bash
-   python GenerateTokenGarmin.py
-   ```
-2. Faça login no browser que abrir.
-3. Aguarde a mensagem `Got ticket: ST-...`
-4. Copie o valor `GARMIN_TOKEN_B64` exibido no terminal.
-5. Substitua o `GARTH_TOKEN` no arquivo `.env`.
-6. Execute qualquer script normalmente.
-
----
-
 ## requirements.txt
+
+```
+requests
+python-dotenv
+garminconnect
+curl_cffi
+```
 
 ---
 
 ## Créditos
 
-Este projeto é baseado em código público disponibilizado pela comunidade:
+Este projeto é baseado em:
 
-- **GenerateTokenGarmin.py** — Adaptado de [coleman8er/garmin-browser-auth.py](https://github.com/coleman8er/garmin-browser-auth)
-  - Implementa o fluxo de autenticação via browser Playwright para contornar bloqueios da Garmin
-  - [Garth](https://github.com/matin/garth) — Inspiração para o padrão de token OAuth
-
-A integração com a API REST do Garmin Connect foi feita seguindo as rotas documentadas internamente e descobertas pela comunidade de desenvolvedores.
+- **[cyberjunky/python-garminconnect](https://github.com/cyberjunky/python-garminconnect)** — biblioteca Python para autenticação e acesso à API Garmin Connect, implementando o fluxo SSO mobile nativo com tokens DI OAuth.
 
 ---
 
